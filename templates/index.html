@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Movie Search - OMDB API</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <i class="fas fa-film"></i> Movie Search
+        </h1>
+        
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search for movies (e.g., Inception, The Matrix, ...)" />
+            <button id="searchBtn" onclick="searchMovies(1)">
+                <i class="fas fa-search"></i> Search
+            </button>
+        </div>
+        
+        <div id="errorContainer"></div>
+        <div id="loadingContainer"></div>
+        <div id="resultsContainer">
+            <div class="movies-grid" id="moviesGrid"></div>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <!-- Movie Details Modal -->
+    <div class="modal" id="movieModal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div id="movieDetails"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 1;
+        let currentQuery = '';
+        let totalPages = 1;
+
+        // Enter key support
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchMovies(1);
+            }
+        });
+
+        function searchMovies(page) {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                showError('Please enter a search term');
+                return;
+            }
+
+            currentQuery = query;
+            currentPage = page;
+            
+            // Show loading
+            document.getElementById('loadingContainer').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Searching for movies...</div>';
+            document.getElementById('errorContainer').innerHTML = '';
+            document.getElementById('moviesGrid').innerHTML = '';
+            document.getElementById('pagination').innerHTML = '';
+            
+            // Disable search button
+            document.getElementById('searchBtn').disabled = true;
+
+            fetch(`/search?q=${encodeURIComponent(query)}&page=${page}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loadingContainer').innerHTML = '';
+                    document.getElementById('searchBtn').disabled = false;
+                    
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
+                    
+                    displayMovies(data.movies);
+                    displayPagination(data.current_page, data.total_pages);
+                })
+                .catch(error => {
+                    document.getElementById('loadingContainer').innerHTML = '';
+                    document.getElementById('searchBtn').disabled = false;
+                    showError('Network error. Please try again.');
+                    console.error('Error:', error);
+                });
+        }
+
+        function displayMovies(movies) {
+            const grid = document.getElementById('moviesGrid');
+            grid.innerHTML = '';
+            
+            if (!movies || movies.length === 0) {
+                grid.innerHTML = '<p style="text-align:center;color:#666;padding:40px;">No movies found</p>';
+                return;
+            }
+            
+            movies.forEach(movie => {
+                const card = document.createElement('div');
+                card.className = 'movie-card';
+                
+                const posterHtml = movie.poster && movie.poster !== 'N/A' 
+                    ? `<img src="${movie.poster}" alt="${movie.title}" class="movie-poster" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">`
+                    : '';
+                
+                const placeholderHtml = !movie.poster || movie.poster === 'N/A'
+                    ? `<div class="movie-poster-placeholder"><i class="fas fa-film" style="font-size:50px;"></i></div>`
+                    : `<div class="movie-poster-placeholder" style="display:none;"><i class="fas fa-film" style="font-size:50px;"></i></div>`;
+                
+                card.innerHTML = `
+                    ${posterHtml}
+                    ${placeholderHtml}
+                    <div class="movie-info">
+                        <div class="movie-title">${movie.title}</div>
+                        <div class="movie-year">${movie.year}</div>
+                    </div>
+                `;
+                
+                card.addEventListener('click', () => getMovieDetails(movie.imdb_id));
+                grid.appendChild(card);
+            });
+        }
+
+        function displayPagination(currentPage, totalPages) {
+            const paginationDiv = document.getElementById('pagination');
+            if (totalPages <= 1) {
+                paginationDiv.innerHTML = '';
+                return;
+            }
+            
+            paginationDiv.innerHTML = `
+                <button onclick="searchMovies(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>
+                    <i class="fas fa-chevron-left"></i> Previous
+                </button>
+                <span>Page ${currentPage} of ${totalPages}</span>
+                <button onclick="searchMovies(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>
+                    Next <i class="fas fa-chevron-right"></i>
+                </button>
+            `;
+        }
+
+        function getMovieDetails(imdbId) {
+            showLoading('Fetching movie details...');
+            
+            fetch(`/movie/${imdbId}`)
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loadingContainer').innerHTML = '';
+                    
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
+                    
+                    displayMovieDetails(data);
+                })
+                .catch(error => {
+                    document.getElementById('loadingContainer').innerHTML = '';
+                    showError('Error fetching movie details');
+                    console.error('Error:', error);
+                });
+        }
+
+        function displayMovieDetails(movie) {
+            const modal = document.getElementById('movieModal');
+            const detailsDiv = document.getElementById('movieDetails');
+            
+            const posterHtml = movie.poster && movie.poster !== 'N/A'
+                ? `<img src="${movie.poster}" alt="${movie.title}" class="movie-detail-poster">`
+                : `<div class="movie-poster-placeholder" style="height:400px;"><i class="fas fa-film" style="font-size:80px;"></i></div>`;
+            
+            // Ratings
+            let ratingsHtml = '';
+            if (movie.ratings && movie.ratings.length > 0) {
+                ratingsHtml = movie.ratings.map(r => 
+                    `<span class="rating-badge">${r.Source}: ${r.Value}</span>`
+                ).join('');
+            }
+            
+            detailsDiv.innerHTML = `
+                <div class="movie-detail-grid">
+                    <div>
+                        ${posterHtml}
+                    </div>
+                    <div class="movie-detail-info">
+                        <h2>${movie.title} (${movie.year})</h2>
+                        <p><span class="label">Rated:</span> ${movie.rated}</p>
+                        <p><span class="label">Runtime:</span> ${movie.runtime}</p>
+                        <p><span class="label">Genre:</span> ${movie.genre}</p>
+                        <p><span class="label">Director:</span> ${movie.director}</p>
+                        <p><span class="label">Writers:</span> ${movie.writer}</p>
+                        <p><span class="label">Actors:</span> ${movie.actors}</p>
+                        <p><span class="label">Plot:</span> ${movie.plot}</p>
+                        <p><span class="label">Language:</span> ${movie.language}</p>
+                        <p><span class="label">Country:</span> ${movie.country}</p>
+                        <p><span class="label">Awards:</span> ${movie.awards}</p>
+                        <p><span class="label">IMDb Rating:</span> ⭐ ${movie.imdb_rating} (${movie.imdb_votes} votes)</p>
+                        ${movie.metascore !== 'N/A' ? `<p><span class="label">Metascore:</span> ${movie.metascore}</p>` : ''}
+                        ${movie.box_office !== 'N/A' ? `<p><span class="label">Box Office:</span> ${movie.box_office}</p>` : ''}
+                        ${ratingsHtml ? `<p><span class="label">Ratings:</span></p><p>${ratingsHtml}</p>` : ''}
+                    </div>
+                </div>
+            `;
+            
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal() {
+            document.getElementById('movieModal').classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        // Close modal when clicking outside
+        document.getElementById('movieModal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeModal();
+            }
+        });
+
+        function showError(message) {
+            document.getElementById('errorContainer').innerHTML = `<div class="error"><i class="fas fa-exclamation-circle"></i> ${message}</div>`;
+            setTimeout(() => {
+                document.getElementById('errorContainer').innerHTML = '';
+            }, 5000);
+        }
+
+        function showLoading(message) {
+            document.getElementById('loadingContainer').innerHTML = `<div class="loading"><i class="fas fa-spinner fa-spin"></i> ${message}</div>`;
+        }
+
+        // Auto-search on page load with default term
+        window.addEventListener('load', function() {
+            document.getElementById('searchInput').value = 'Inception';
+            searchMovies(1);
+        });
+    </script>
+</body>
+</html>
